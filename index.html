@@ -8,6 +8,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase SDK (v8) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+KR:wght@300;400;600;700&display=swap');
         
@@ -71,7 +74,7 @@
                 <!-- Sync Status Indicator -->
                 <div id="syncBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>REALTIME</span>
+                    <span>FIREBASE REALTIME</span>
                 </div>
             </div>
         </div>
@@ -326,9 +329,21 @@
         </div>
     </div>
 
+    <!-- Firebase Realtime Database Integration Script -->
     <script>
+        // Firebase 설정 (민서 님 프로젝트 설정 적용)
+        const firebaseConfig = {
+            databaseURL: "https://project-104106837110943026-default-rtdb.firebaseio.com/"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const rtdb = firebase.database();
+
         let currentRoomCode = "ALLIANCE-WAR-1";
         let isAdmin = false;
+        let isRemoteUpdate = false; // 무한 루프 방지용 플래그
 
         let appData = {
             participants: [],
@@ -338,23 +353,39 @@
             champion: null
         };
 
-        function loadRoomData(roomCode) {
-            const local = localStorage.getItem(`ALLIANCE_HUB_${roomCode}`);
-            if(local) {
-                try {
-                    appData = JSON.parse(local);
-                } catch(e) {
+        // Firebase 데이터 실시간 구독 연결 함수
+        function subscribeFirebaseData(roomCode) {
+            const dbRef = rtdb.ref(`rooms/${roomCode}`);
+            
+            // 기존 리스너 제거 후 새로 연결
+            dbRef.off();
+
+            dbRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                isRemoteUpdate = true;
+                if (data) {
+                    appData = data;
+                } else {
                     initDefaultData();
+                    saveRoomData(); // 초기 데이터가 없으면 등록
                 }
-            } else {
-                initDefaultData();
-            }
-            renderAll();
+                renderAll();
+                isRemoteUpdate = false;
+            }, (error) => {
+                console.error("Firebase 읽기 실패:", error);
+            });
         }
 
+        // Firebase에 데이터 저장 함수
         function saveRoomData() {
-            localStorage.setItem(`ALLIANCE_HUB_${currentRoomCode}`, JSON.stringify(appData));
-            renderAll();
+            if (isRemoteUpdate) return; // 다른 사람의 실시간 업데이트를 반영 중일 때는 재저장 방지
+
+            const dbRef = rtdb.ref(`rooms/${currentRoomCode}`);
+            dbRef.set(appData).then(() => {
+                renderAll();
+            }).catch((error) => {
+                console.error("Firebase 저장 실패:", error);
+            });
         }
 
         function initDefaultData() {
@@ -746,11 +777,12 @@
             const newCode = document.getElementById('roomCodeInput').value.trim().toUpperCase();
             if (newCode) {
                 currentRoomCode = newCode;
-                loadRoomData(currentRoomCode);
+                subscribeFirebaseData(currentRoomCode);
             }
         });
 
-        loadRoomData(currentRoomCode);
+        // 최초 실행 시 Firebase 실시간 리스너 구독 시작
+        subscribeFirebaseData(currentRoomCode);
     </script>
 </body>
 </html>
